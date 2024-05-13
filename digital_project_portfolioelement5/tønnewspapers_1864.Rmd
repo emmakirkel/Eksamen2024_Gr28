@@ -1,0 +1,213 @@
+---
+title: "Tønder newspapers concerning Dybbøl 1864"
+author: "Emma Kirkel, Julie Bugge, Lasse Due and Linus Skov"
+date: "2024-05-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Presentation of project
+
+We want to analysize how Copenhagen newspapers have represented the 2. Schleswig war in 1864.
+Our data is collected from the digital public data from the Royal Danish Library's newspaper collection on mediestream.dk. The data includes 6 hits from one newspaper, Vestslesvigsk Tidende. 
+Our project will include text mining, filtering and a visualization of our data and then we will perform sentiment-analysis on our data.
+
+## Text mining and filtering
+
+# Loading relevant libraries
+
+```{r, message=FALSE}
+library(tidyverse)
+library(tidytext)
+library(ggwordcloud)
+```
+
+# Loading data from articles about Dybbøl in Tønder newspapers from 1864
+
+On mediestream.dk we have used the seach string: "dybbøl" AND py:1864 AND lplace:Tønder. To export this data to a CSV-file we have used an API represented in the Swagger UI by this link:
+http://labs.statsbiblioteket.dk/labsapi/api//api-docs?url=/labsapi/api/openapi.yaml
+We have chosen the fields: link, recordID, fulltext_org, familyId, lplace, location_name, pwa, timestamp
+
+```{r}
+link <- "http://labs.statsbiblioteket.dk/labsapi/api/aviser/export/fields?query=%22dybb%C3%B8l%22%20AND%20py%3A1864%20AND%20lplace%3AT%C3%B8nder&fields=link&fields=recordID&fields=timestamp&fields=pwa&fields=fulltext_org&fields=familyId&fields=lplace&fields=location_name&max=-1&structure=header&structure=content&format=CSV"
+```
+
+# Loading the data into R and creating an object with the data
+
+```{r}
+tøn_dybbøl_1864 <- read_csv(link)
+```
+# Double-checking our data from the Mediestream-API
+
+We want to double check that the metadata corresponds with our search string in mediestream, where we specified the publication location 
+
+```{r}
+tøn_dybbøl_1864 %>% 
+  count(lplace, sort = TRUE)
+```
+We also want to check the metadata on which newspaper the articles derive from
+
+```{r}
+tøn_dybbøl_1864 %>% 
+  count(familyId, sort = TRUE)
+```
+
+# Tidying
+
+We have used the tidytext approach and the unnest_tokens-function to break up the text into individual words
+
+```{r}
+tidy_tøn_dybbøl_1864 <- tøn_dybbøl_1864 %>% 
+  unnest_tokens(word, fulltext_org)
+```
+
+Now we have a new column called words in our tidy-tibble and we can count the most frequent words 
+
+```{r}
+tidy_tøn_dybbøl_1864 %>% 
+  count(word, sort = TRUE)
+```
+
+This is not the result we were looking for, so we need to employ a stopword-list
+
+# Adding stopword-lists
+
+To accomodate possibile OCR-misreadings from the older 1800 danish language we have used this 19th century stopwordlist provided by Max Odsbjerg:
+
+```{r}
+stopord_1800 <- read_csv("https://gist.githubusercontent.com/maxodsbjerg/1537cf14c3d46b3d30caa5d99f8758e9/raw/9f044a38505334f035be111c9a3f654a24418f6d/stopord_18_clean.csv")
+```
+
+To use the stopword-list efficiently we are using "anti_join" before "count" so we can sort out the the stopwords 
+
+```{r}
+tidy_tøn_dybbøl_1864 %>% 
+  anti_join(stopord_1800) %>% 
+  count(word, sort = TRUE)
+```
+
+By adding the stopord_1800 stopword-list some redundant words were still included in the tibble. Therefore we looked more closely in the tibble for some of these redundant words and made our own personalized stoplist for the newspaper. We created a tibble and combining values into a vector. This list includes more words for some extra sorting
+
+```{r}
+stopword_extra <- tibble(word=c("mig","hvis","sit","derfor","sine","thi"))
+```
+
+Now we are using "anti_join" before "count" again so we can sort out the stopwords from the stopord_1800-list and our stopword_extra-list
+
+```{r}
+tidy_tøn_dybbøl_1864 %>% 
+  anti_join(stopord_1800) %>% 
+  anti_join(stopword_extra) %>% 
+  count(word, sort = TRUE)
+```
+
+## Making a wordcloud
+
+# Filtering to make an object including the 100 most frequent words
+
+Now we would like to make an object of the 100 most frequent words by using the slice()-function which later enables us to make a visual wordcloud. We are also making sure our stopword-lists are still implemented
+
+```{r}
+top100_tøn_dybbøl_1864<-tidy_tøn_dybbøl_1864 %>% 
+  anti_join(stopord_1800) %>% 
+  anti_join(stopword_extra) %>% 
+  count(word, sort = TRUE) %>% 
+  slice(1:100) #Selecting the 100 most frequent words
+```
+
+Now we are using the ggtools included in the tidyverse-package to make a simple wordcloud of the 100 most frequent words
+
+```{r}
+top100_tøn_dybbøl_1864 %>%   
+  ggplot(aes(label=word))+
+  geom_text_wordcloud() +
+  theme_minimal()
+```
+
+We would like to custommize our wordcloud to give it a different shape and different colours
+
+```{r}
+ggplot(data = top100_tøn_dybbøl_1864, aes(label = word, size = n)) +
+  geom_text_wordcloud_area(aes(color = n), shape = "star") +
+  scale_size_area(max_size = 12) +
+  scale_color_gradientn(colors = c("black","yellow","red")) +
+  theme_minimal()
+```
+
+## Sentiment analysis using Sentida
+
+# Downloading Sentida-library from GitHub
+
+We have chosen to make sentiment-analysis with the danish Sentida-library provided by Lars Kjartan Bacher Svendsen, Jacob Aarup Dalsgaard and Gustav Aarup Lauridsen. Reference: https://github.com/Guscode/Sentida
+
+We are following the instructions provided in the Sentida GitHub-repository to download the library
+
+```{r}
+if(!require("devtools")) install.packages("devtools")
+devtools::install_github("Guscode/Sentida")
+library(Sentida)
+```
+
+Our goal now is to get a sentiment-score for every publication. 
+
+We want to perform the sentiment-analysis on the fulltext_org column but we would also like our stopword-lists to be implemented in the full text. This is done to limit the amount of redundant words on which we are performing the analysis.
+
+First we are creating a new dataframe where we are implementing our stopword-lists and group the data by recordID which is an indicator for each newspaper-publication. This is done by using both code we used before but also new code where we use the paste and collapse-functions
+
+```{r}
+fulltext_tidy_recordID<-tidy_tøn_dybbøl_1864 %>%
+  anti_join(stopord_1800, by = c("word" = "word")) %>%
+  anti_join(stopword_extra,by=c("word"="word")) %>% 
+  group_by(recordID) %>% 
+  summarise(fulltext_stopwords=paste(word, collapse=" "))
+```
+
+Now we are performing the sentiment-analysis and creating a new dataframe which includes both the newspaper-publication (recordID), the full text stopwords excluded (fulltext_stopwords) and the sentiment for each publication (fulltext_sentiment) 
+
+```{r}
+sentiment_text_recordID<- fulltext_tidy_recordID %>%
+  rowwise() %>% 
+  mutate(fulltext_sentiment = sentida(fulltext_stopwords, output="mean"))
+```
+
+Now we would like to make a new dataframe which includes these two new columns with the full text excluding stopwords, the sentiment for each publication and our original dataframe (tøn_dybbøl_1864) 
+
+We do this by using the left_join()-function
+
+```{r}
+sentiments_1864 <- tøn_dybbøl_1864 %>% 
+  left_join(sentiment_text_recordID)
+```
+
+Now we have a new dataframe (sentiments_1864) which we can use to make a ggplot-visualization of the change in the newspapers sentiment over time
+
+```{r}
+ggplot(sentiments_1864, aes(x=timestamp,y=fulltext_sentiment))+
+  geom_point(aes(col=familyId))
+```
+
+We also found it would be interesting to figure out the mean sentiment of all the articles combined
+
+Therefor we are again creating a new dataframe where we are implementing our stopword-lists and group the data by familyId this time, which is an indicator for the newspaper. This is done by using both code we used before but also new code where we use the paste and collapse-functions
+
+```{r}
+fulltext_tidy_familyId<-tidy_tøn_dybbøl_1864 %>%
+  anti_join(stopord_1800, by = c("word"="word")) %>%
+  anti_join(stopword_extra,by=c("word"="word")) %>% 
+  group_by(familyId) %>% 
+  summarise(fulltext_org=paste(word, collapse=" "))
+```
+
+Now we are performing the sentiment-analysis and creating a new dataframe which includes both the newspaper (familyId), the full text stopwords excluded (fulltext_stopwords) and the sentiment for the newspaper (fulltext_sentiment)
+
+```{r}
+sentiment_text_familyId<- fulltext_tidy_familyId %>%
+  rowwise() %>% 
+  mutate(fulltext_sentiment = sentida(fulltext_org, output="mean"))
+```
+
+
+
